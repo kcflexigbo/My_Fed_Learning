@@ -9,11 +9,17 @@ from torchvision import datasets, transforms
 import torch
 import os
 import tkinter as tk
+from tkinter import filedialog, messagebox
 from tkinter.ttk import *
 from PIL import Image, ImageTk
 from utils.options import args_parser
 from utils.sampling import mnist_iid, mnist_noniid, cifar_iid
 import warnings
+from sharedata import create_clients
+from utils.filesbrowser import createPath
+
+global num
+num = 100
 
 
 def initGUI(root, args):
@@ -109,8 +115,24 @@ def initGUI(root, args):
     showimagesbtn = tk.Button(root, text="显示图片", font=('Arial', 11), command=lambda: showimages())
     showimagesbtn.place(relx=0.85, rely=0.7, relheight=0.05, relwidth=0.1)
 
+    global showclientsimagesbtn
+    showclientsimagesbtn = tk.Button(root, text="向客户端显示图像", font=('Arial', 11),
+                                     command=lambda: clients_showimages())
+    showclientsimagesbtn.place(relx=0.83, rely=0.9, relheight=0.05, relwidth=0.14)
+    showclientsimagesbtn.config(state="disabled")
+
+    lb9 = tk.Label(root, text="客户端查看数据: ", font=('Arial', 10))
+    lb9.place(relx=0.002, rely=0.18, relheight=0.04, relwidth=0.1)
+    global clientno_text, clientno
+    clientno_text = tk.StringVar()
+    clientno_text.set(str(args.num_users - 1))
+    clientno = tk.Entry(root, textvariable=clientno_text)
+    clientno.place(relx=0.1, rely=0.18, relheight=0.04, relwidth=0.04)
+    clientno.config(state="disabled")
+
 
 def starttrain():
+    global clients_list
     args.num_users = int(no_clients_text.get())
     args.dataset = dataset_sel_value.get()
 
@@ -130,6 +152,9 @@ def starttrain():
     createlogs()
     textbox.insert(1.0, f"""{args.lr}\n""")
     splitdataset(args)
+    clients_list = create_clients(args, dataset_train, dict_users)
+    clientno.config(state="normal")
+    showclientsimagesbtn.config(state="normal")
 
 
 def createlogs():
@@ -147,49 +172,128 @@ def splitdataset(args):
     global dataset_test
     global dict_users
     global img_size
-    dataset_train, dataset_test = dataset_split()
+    dataset_train, dataset_test, dict_users = dataset_split()
+
 
 def dataset_split():
     args.dataset = dataset_sel_value.get()
     if args.dataset == 'mnist':
-        trans_mnist = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-        dataset_train2 = datasets.MNIST('../data/mnist/', train=True, download=True, transform=trans_mnist)
-        dataset_test2 = datasets.MNIST('../data/mnist/', train=False, download=True, transform=trans_mnist)
+        trans_mnist = transforms.Compose([transforms.ToTensor(),
+                                          transforms.Normalize((0.1307,),
+                                                               (0.3081,))])
+        datadir = os.path.join(cfilepath, "data", "mnist")
+        dataset_train2 = datasets.MNIST(root=datadir, train=True, download=True, transform=trans_mnist)
+        dataset_test2 = datasets.MNIST(root=datadir, train=False, download=True, transform=trans_mnist)
+        #augmentimages(dataset_train2)
         # sample users
         if args.iid:
-            dict_users = mnist_iid(dataset_train2, args.num_users)
+            dict_users2 = mnist_iid(dataset_train2, args.num_users)
         else:
-            dict_users = mnist_noniid(dataset_train2, args.num_users)
+            dict_users2 = mnist_noniid(dataset_train2, args.num_users)
     elif args.dataset == 'cifar':
-        trans_cifar = transforms.Compose(
-            [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        dataset_train2 = datasets.CIFAR10('../data/cifar', train=True, download=True, transform=trans_cifar)
-        dataset_test2 = datasets.CIFAR10('../data/cifar', train=False, download=True, transform=trans_cifar)
+        trans_cifar_train = transforms.Compose([transforms.RandomHorizontalFlip(),
+                                                transforms.RandomRotation(10),
+                                                transforms.RandomCrop(28),
+                                                transforms.ToTensor(),
+                                                transforms.Normalize((0.4, 0.4, 0.4), (0.4, 0.4, 0.4))])
+        trans_cifar_test = transforms.Compose([transforms.RandomCrop(28),
+                                               transforms.ToTensor(),
+                                               transforms.Normalize((0.4, 0.4, 0.4), (0.4, 0.4, 0.4))])
+        datadir = os.path.join(cfilepath, "data", "cifar")
+        dataset_train2 = datasets.CIFAR10(root=datadir, train=True, download=True, transform=trans_cifar_train)
+        dataset_test2 = datasets.CIFAR10(root=datadir, train=False, download=True, transform=trans_cifar_test)
+        #(dataset_train2)
         if args.iid:
-            dict_users = cifar_iid(dataset_train2, args.num_users)
+            dict_users2 = cifar_iid(dataset_train2, args.num_users)
         else:
             exit('Error: only consider IID setting in CIFAR10')
     else:
         exit('Error: unrecognized dataset')
-    return dataset_train2, dataset_test2
+    return dataset_train2, dataset_test2, dict_users2
 
 
-def showimages():
+def showimages(num=num):
     args.dataset = dataset_sel_value.get()
-    dataset_train2, dataset_test2 = dataset_split()
-    fig, axes = plt.subplots(nrows=6, ncols=6, figsize=(4, 4))
+    if args.dataset == "cifar":
+        labels = ["airplane", "automobile", "bird", "cat", "deer",
+                  "dog", "frog", "horse", "ship", "truck"]
+    else:
+        labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    dataset_train2, dataset_test2, dict_users2 = dataset_split()
+    fig, axes = plt.subplots(nrows=6, ncols=6, figsize=(5, 5))
     warnings.filterwarnings("ignore")
-    for i in range(0, 36):
+    for i in range(num, num + 36):
         img_size = dataset_train2[i][0].shape
         img = np.array(dataset_train2[i][0]).transpose([1, 2, 0])
+        img = np.rot90(img)
         # print("Shape= ", img.shape)
         # axes[0,i].plot(img, 'b')
-        axes[int(i / 6), i % 6].imshow(img)
-        axes[int(i / 6), i % 6].set_title(dataset_train2[i][1])
-        axes[int(i / 6), i % 6].axis('off')
+        axes[int((i % 36) / 6), i % 6].imshow(img)
+        axes[int((i % 36) / 6), i % 6].set_title(labels[dataset_train2[i][1]])
+        axes[int((i % 36) / 6), i % 6].axis('off')
+    plt.show()
+    num = num + 36
+
+
+def clients_showimages():
+    try:
+        if clientno.__getstate__() != "disabled":
+            client_num_fake = clientno_text.get().strip()
+            client_num = int(clientno_text.get())
+            if client_num >= args.num_users:
+                messagebox.showerror(title="客户端号码输入错误",
+                                     message=f'请输入一个介于0和{args.num_users - 1}之间的值')
+                return
+        else:
+            return ValueError
+    except Exception as e:
+        messagebox.showerror(message=f"以 10 为基数的 int（） 无效文字：{client_num_fake}")
+        return
+    selClient = clients_list[client_num]
+    args.dataset = dataset_sel_value.get()
+    if args.dataset == "cifar":
+        labels = ["airplane", "automobile", "bird", "cat", "deer",
+                  "dog", "frog", "horse", "ship", "truck"]
+    else:
+        labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    fig, axes = plt.subplots(nrows=6, ncols=6, figsize=(5, 5))
+    warnings.filterwarnings("ignore")
+    cdataset = selClient.train_data
+    count = 0
+    print(f"selected client title: {selClient.title}")
+    for i, j in enumerate(cdataset):
+        if count > 35:
+            break
+        img_size = j[0][0].shape
+        print(f"current dataset enum value: {i}, Length: {len(j[0])}")
+        for image_index in range(len(j[0])):
+            img = np.array(j[0][image_index]).transpose([1, 2, 0])
+            img = np.rot90(img)
+            # print("Shape= ", img.shape)
+            # axes[0,i].plot(img, 'b')
+            axes[int(count / 6), count % 6].imshow(img)
+            axes[int(count / 6), count % 6].set_title(labels[j[1][image_index]])
+            axes[int(count / 6), count % 6].axis('off')
+            count += 1
+            if count > 35:
+                break
     plt.show()
 
+
+def augmentimages(dataset_train2):
+    # b = list(dataset_train2)
+    # print(len(b))
+    for i in range(0, 5000):
+        img = np.array(dataset_train2[i][0]).transpose([1, 2, 0])
+        img = np.rot90(img)
+        img = img.reshape(3072)
+        dataset_train2[i + 50000][0] = img
+        dataset_train2[i + 50000][1] = dataset_train2[i][1]
+
+
 if __name__ == "__main__":
+    global cfilepath
+    cfilepath = createPath()
     root = tk.Tk()
     args = args_parser()
     initGUI(root, args)
