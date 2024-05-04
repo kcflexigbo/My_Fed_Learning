@@ -14,9 +14,10 @@ from tkinter.ttk import *
 from PIL import Image, ImageTk
 from utils.options import args_parser
 from utils.sampling import mnist_iid, mnist_noniid, cifar_iid
-import warnings
-from sharedata import create_clients
+from utils.sharedata import create_clients
 from utils.filesbrowser import createPath
+import warnings
+
 
 global num
 num = 100
@@ -260,17 +261,13 @@ def clients_showimages():
     warnings.filterwarnings("ignore")
     cdataset = selClient.train_data
     count = 0
-    print(f"selected client title: {selClient.title}")
     for i, j in enumerate(cdataset):
         if count > 35:
             break
         img_size = j[0][0].shape
-        print(f"current dataset enum value: {i}, Length: {len(j[0])}")
         for image_index in range(len(j[0])):
             img = np.array(j[0][image_index]).transpose([1, 2, 0])
             img = np.rot90(img)
-            # print("Shape= ", img.shape)
-            # axes[0,i].plot(img, 'b')
             axes[int(count / 6), count % 6].imshow(img)
             axes[int(count / 6), count % 6].set_title(labels[j[1][image_index]])
             axes[int(count / 6), count % 6].axis('off')
