@@ -18,7 +18,7 @@ class DatasetSplit(Dataset):
 def create_clients(args, dataset_to_split, dict_users):
     data_split = []
     for i in range(args.num_users):
-        data_split.append(DataLoader(DatasetSplit(dataset_to_split, dict_users[i]), batch_size=args.local_bs, shuffle=True))
+        data_split.append(DataLoader(DatasetSplit(dataset_to_split, dict_users[i]), batch_size=args.local_bs, shuffle=False))
     clients_list = []
     for i in range(args.num_users):
         client = Clients(title=i, tdata=data_split[i])

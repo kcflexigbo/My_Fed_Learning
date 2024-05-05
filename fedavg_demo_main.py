@@ -15,9 +15,10 @@ from PIL import Image, ImageTk
 from utils.options import args_parser
 from utils.sampling import mnist_iid, mnist_noniid, cifar_iid
 from utils.sharedata import create_clients
-from utils.filesbrowser import createPath
+from utils.filesbrowser import createPath, createlogfiles
+from models.Nets import MLP, CNNMnist, CNNCifar
 import warnings
-
+import threading
 
 global num
 num = 100
@@ -110,7 +111,8 @@ def initGUI(root, args):
     textbox = tk.Text(root, font=('Arial', 10), height=11, width=120)
     textbox.place(relx=0.02, rely=0.6)
 
-    confirmbtn = tk.Button(root, text="开始训练", font=('Arial', 11), command=lambda: starttrain())
+    global confirmbtn
+    confirmbtn = tk.Button(root, text="开始训练", font=('Arial', 11), command=lambda: starttrainthread())
     confirmbtn.place(relx=0.85, rely=0.8, relheight=0.05, relwidth=0.1)
 
     showimagesbtn = tk.Button(root, text="显示图片", font=('Arial', 11), command=lambda: showimages())
@@ -132,7 +134,16 @@ def initGUI(root, args):
     clientno.config(state="disabled")
 
 
+def starttrainthread():
+    global train_thread_flag
+    train_thread_flag = False
+    train_thread = threading.Thread(target=starttrain)
+    train_thread.start()
+
+
 def starttrain():
+    confirmbtn.config(state="disabled")
+    showclientsimagesbtn.config(state="disabled")
     global clients_list
     args.num_users = int(no_clients_text.get())
     args.dataset = dataset_sel_value.get()
@@ -151,11 +162,27 @@ def starttrain():
     args.local_bs = int(batchsize_text.get())
     args.lr = float(lrrate_text.get())
     createlogs()
-    textbox.insert(1.0, f"""{args.lr}\n""")
+    textbox.delete(1.0, "end")
     splitdataset(args)
     clients_list = create_clients(args, dataset_train, dict_users)
+    net_glob = createmodel()
+    loss_train_file_obj, acc_file_obj, loss_file_obj = createlogfiles(log_path, net_glob)
+    textbox.insert(1.0, f"""{net_glob}\n""")
     clientno.config(state="normal")
     showclientsimagesbtn.config(state="normal")
+    confirmbtn.config(state="normal")
+    loss_train_file_obj.close()
+    acc_file_obj.close()
+    loss_file_obj.close()
+
+
+def model_train():
+    no_epochs= args.epochs
+    loss_train = []
+    acc_plot_list = []
+    loss_plot_list = []
+    for i in range(no_epochs):
+        loss_locals = []
 
 
 def createlogs():
@@ -177,6 +204,7 @@ def splitdataset(args):
 
 
 def dataset_split():
+    global img_size
     args.dataset = dataset_sel_value.get()
     if args.dataset == 'mnist':
         trans_mnist = transforms.Compose([transforms.ToTensor(),
@@ -185,7 +213,6 @@ def dataset_split():
         datadir = os.path.join(cfilepath, "data", "mnist")
         dataset_train2 = datasets.MNIST(root=datadir, train=True, download=True, transform=trans_mnist)
         dataset_test2 = datasets.MNIST(root=datadir, train=False, download=True, transform=trans_mnist)
-        #augmentimages(dataset_train2)
         # sample users
         if args.iid:
             dict_users2 = mnist_iid(dataset_train2, args.num_users)
@@ -210,10 +237,27 @@ def dataset_split():
             exit('Error: only consider IID setting in CIFAR10')
     else:
         exit('Error: unrecognized dataset')
+    img_size = dataset_train2[0][0].shape
     return dataset_train2, dataset_test2, dict_users2
 
 
-def showimages(num=num):
+def createmodel():
+    if args.model == 'cnn' and args.dataset == 'cifar':
+        net_glob = CNNCifar(args=args).to(args.device)
+    elif args.model == 'cnn' and args.dataset == 'mnist':
+        net_glob = CNNMnist(args=args).to(args.device)
+    elif args.model == 'mlp':
+        len_in = 1
+        for x in img_size:
+            len_in *= x
+        net_glob = MLP(dim_in=len_in, dim_hidden=200, dim_out=args.num_classes).to(args.device)
+    else:
+        exit('Error: unrecognized model')
+    net_glob.train()
+    return net_glob
+
+
+def showimages():
     args.dataset = dataset_sel_value.get()
     if args.dataset == "cifar":
         labels = ["airplane", "automobile", "bird", "cat", "deer",
@@ -223,7 +267,7 @@ def showimages(num=num):
     dataset_train2, dataset_test2, dict_users2 = dataset_split()
     fig, axes = plt.subplots(nrows=6, ncols=6, figsize=(5, 5))
     warnings.filterwarnings("ignore")
-    for i in range(num, num + 36):
+    for i in range(36):
         img_size = dataset_train2[i][0].shape
         img = np.array(dataset_train2[i][0]).transpose([1, 2, 0])
         img = np.rot90(img)
@@ -233,7 +277,6 @@ def showimages(num=num):
         axes[int((i % 36) / 6), i % 6].set_title(labels[dataset_train2[i][1]])
         axes[int((i % 36) / 6), i % 6].axis('off')
     plt.show()
-    num = num + 36
 
 
 def clients_showimages():
