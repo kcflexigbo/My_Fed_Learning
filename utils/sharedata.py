@@ -1,4 +1,4 @@
-from Clients import Clients
+from utils.Clients import Clients
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -15,12 +15,13 @@ class DatasetSplit(Dataset):
         return image, label
 
 
-def create_clients(args, dataset_to_split, dict_users):
+def create_clients(args, dataset_to_split, dict_users, client_path):
     data_split = []
     for i in range(args.num_users):
-        data_split.append(DataLoader(DatasetSplit(dataset_to_split, dict_users[i]), batch_size=args.local_bs, shuffle=False))
+        data_split.append(DataLoader(DatasetSplit(dataset_to_split, dict_users[i]),
+                                     batch_size=args.local_bs, shuffle=True))
     clients_list = []
     for i in range(args.num_users):
-        client = Clients(title=i, tdata=data_split[i])
+        client = Clients(title=i, tdata=data_split[i], args=args, logPath=client_path)
         clients_list.append(client)
     return clients_list

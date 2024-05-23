@@ -52,3 +52,4 @@ def createlogfiles(log_path, net_glob):
     model_properties_file_obj.write(str(net_glob))
     model_properties_file_obj.close()
     return loss_train_file_obj, acc_file_obj, loss_file_obj
+

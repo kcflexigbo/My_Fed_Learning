@@ -7,8 +7,11 @@ import copy
 import numpy as np
 from torchvision import datasets, transforms
 import torch
+
+# torch.backends.cudnn.enabled = False
+import torch.multiprocessing as mp
 import os
-import tkinter as tk
+from mttkinter import mtTkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter.ttk import *
 from PIL import Image, ImageTk
@@ -17,11 +20,13 @@ from utils.sampling import mnist_iid, mnist_noniid, cifar_iid
 from utils.sharedata import create_clients
 from utils.filesbrowser import createPath, createlogfiles
 from models.Nets import MLP, CNNMnist, CNNCifar
+from models.Federated import FedAvg
+from models.test import test_img
 import warnings
 import threading
-
-global num
-num = 100
+from time import time
+from time import sleep
+import multiprocessing as mp2
 
 
 def initGUI(root, args):
@@ -67,6 +72,16 @@ def initGUI(root, args):
     iid_question_menu = tk.OptionMenu(root, iid_sel_value, *iid_options_list)
     iid_question_menu.place(relx=0.42, rely=0.005, relheight=0.04, relwidth=0.09)
 
+    global multi_process_option, multi_process_check
+    mlb = tk.Label(root, text="用多处理: ", font=('Arial', 11))
+    mlb.place(relx=0.52, rely=0.005, relheight=0.04, relwidth=0.07)
+    multi_process_option = tk.StringVar()
+    multi_process_option.set("1")
+    multi_process_check = tk.Checkbutton(root, variable=multi_process_option, onvalue=1, offvalue=0,
+                                         command=multi_process_info, )
+    multi_process_check.place(relx=0.585, rely=0.005, relheight=0.04, relwidth=0.06)
+    multi_process_check.deselect()
+
     lb4 = tk.Label(root, text="客户分数:", font=('Arial', 11))
     lb4.place(relx=0.002, rely=0.09, relheight=0.04, relwidth=0.06)
     global frac_clients_text
@@ -110,12 +125,13 @@ def initGUI(root, args):
     global textbox
     textbox = tk.Text(root, font=('Arial', 10), height=11, width=120)
     textbox.place(relx=0.02, rely=0.6)
+    textbox.config(state="disabled")
 
     global confirmbtn
-    confirmbtn = tk.Button(root, text="开始训练", font=('Arial', 11), command=lambda: starttrainthread())
+    confirmbtn = tk.Button(root, text="开始训练", font=('Arial', 11), command=starttrainthread)
     confirmbtn.place(relx=0.85, rely=0.8, relheight=0.05, relwidth=0.1)
 
-    showimagesbtn = tk.Button(root, text="显示图片", font=('Arial', 11), command=lambda: showimages())
+    showimagesbtn = tk.Button(root, text="显示图片", font=('Arial', 11), command=showimages)
     showimagesbtn.place(relx=0.85, rely=0.7, relheight=0.05, relwidth=0.1)
 
     global showclientsimagesbtn
@@ -133,21 +149,71 @@ def initGUI(root, args):
     clientno.place(relx=0.1, rely=0.18, relheight=0.04, relwidth=0.04)
     clientno.config(state="disabled")
 
+    # lb10 = tk.Label(root, text="testme!!!", font=('Arial', 10))
+    # lb10.place(relx=0.15, rely=0.18, relheight=0.04, relwidth=0.1)
+    # global testme_text
+    # testme_text = tk.StringVar()
+    # testme_text.set(str(0.5))
+    # testme = tk.Entry(root, textvariable=testme_text)
+    # testme.place(relx=0.26, rely=0.18, relheight=0.04, relwidth=0.04)
+
+
+def multi_process_info():
+    optional_val = int(multi_process_option.get())
+    if optional_val == 1:
+        messagebox.showinfo(title="多处理",
+                            message="暂时不建议。 时速度较慢并且第一次运行有错误。 改进正在进行中。 请在实际训练前跑一次。")
+
 
 def starttrainthread():
-    global train_thread_flag
-    train_thread_flag = False
-    train_thread = threading.Thread(target=starttrain)
+    global use_thread_opt
+    use_thread_opt = int(multi_process_option.get())
+    multi_process_check.config(state="disabled")
+    train_thread = threading.Thread(target=start_train)
+    train_thread.daemon = True
     train_thread.start()
 
 
-def starttrain():
+def start_train():
+    global start_time, end_time
+    start_time = time()
     confirmbtn.config(state="disabled")
     showclientsimagesbtn.config(state="disabled")
-    global clients_list
+    global loss_train_file_obj, acc_file_obj, loss_file_obj, clients_list
+    global loss_train_plot_list, acc_plot_list, loss_test_plot_list
+    loss_train_plot_list, acc_plot_list, loss_test_plot_list = [], [], []
+    assign_values()
+    createlogs()
+    textbox.config(state="normal")
+    textbox.delete(1.0, "end")
+    textbox.config(state="disabled")
+    splitdataset(args)
+    clients_list = create_clients(args, dataset_train, dict_users, client_path)
+    start_time = time()
+    createmodel()
+    net_glob.train()
+    loss_train_file_obj, acc_file_obj, loss_file_obj = createlogfiles(log_path, net_glob)
+    textbox.config(state="normal")
+    textbox.insert(1.0, f'Fraction= {args.frac}\n')
+    textbox.insert(1.0, f"""{net_glob}\n""")
+    textbox.config(state="disabled")
+    model_training()
+    end_time = time()
+    loss_train_file_obj.close()
+    acc_file_obj.close()
+    loss_file_obj.close()
+    # plot_graphs()
+    final_test()
+    writetimereport()
+    clientno.config(state="normal")
+    showclientsimagesbtn.config(state="normal")
+    confirmbtn.config(state="normal")
+    multi_process_check.config(state="normal")
+
+
+def assign_values():
     args.num_users = int(no_clients_text.get())
     args.dataset = dataset_sel_value.get()
-
     args.model = model_sel_value.get()
     if args.dataset == "cifar":
         optval = "store_false"
@@ -161,38 +227,135 @@ def starttrain():
     args.local_ep = int(nepochs_text.get())
     args.local_bs = int(batchsize_text.get())
     args.lr = float(lrrate_text.get())
-    createlogs()
-    textbox.delete(1.0, "end")
-    splitdataset(args)
-    clients_list = create_clients(args, dataset_train, dict_users)
-    net_glob = createmodel()
-    loss_train_file_obj, acc_file_obj, loss_file_obj = createlogfiles(log_path, net_glob)
-    textbox.insert(1.0, f"""{net_glob}\n""")
-    clientno.config(state="normal")
-    showclientsimagesbtn.config(state="normal")
-    confirmbtn.config(state="normal")
-    loss_train_file_obj.close()
-    acc_file_obj.close()
-    loss_file_obj.close()
 
 
-def model_train():
-    no_epochs= args.epochs
-    loss_train = []
+def writetimereport():
+    timer_file = os.path.join(log_path, 'timer_log.txt')
+    timer_file_obj = open(timer_file, 'w')
+    timer_string = f"Time Taken= {(end_time - start_time) // 60:.0f} mins, {(end_time - start_time) % 60:.2f} secs\n"
+    timer_file_obj.write(timer_string)
+    timer_file_obj.close()
+    textbox.config(state="normal")
+    textbox.insert(1.0, timer_string)
+    textbox.config(state="disabled")
+
+
+def model_training():
+    global acc_plot_list, loss_train_plot_list, loss_test_plot_list
+    loss_train_plot_list = []
+    loss_test_plot_list = []
     acc_plot_list = []
-    loss_plot_list = []
-    for i in range(no_epochs):
-        loss_locals = []
+    num_clients_for_each_round = max(int(args.frac * args.num_users), 1)
+    for c_round in range(args.epochs):
+        local_models, loss_locals = client_train(num_clients_for_each_round)
+        w_glob = FedAvg(local_models)
+        net_glob.load_state_dict(w_glob)
+        printloss(c_round, loss_locals)
+
+
+def client_train(num_clients_for_each_round):
+    global client_process
+    loss_locals = []
+    local_models = []
+    client_thread = []
+    client_process = []
+    client_run_list = []
+    idxs_users = np.random.choice(range(args.num_users), num_clients_for_each_round, replace=False)
+    # client_queue = mp.Manager().Queue()
+    # client_queue = mp2.Manager().Queue()
+    client_queue = mp.Queue()
+    if use_thread_opt == 1:
+        for idx in idxs_users:
+            client_run_list.append(clients_list[idx])
+            new_net_glob = copy.deepcopy(net_glob).to(args.device)
+            new_proc = mp.Process(target=clients_list[idx].train,
+                                  args=(new_net_glob, client_queue, start_time))
+            client_process.append(new_proc)
+            new_proc.start()
+
+        for proc in client_process:
+            # if proc.is_alive():
+            #     print(f"Process still alive {client_process.index(proc)}")
+            proc.join()
+
+        for idx in range(len(idxs_users)):
+            try:
+                # cmod = torch.load(client_run_list[idx].model_path, map_location=torch.device(args.device))
+                cmod = torch.load(client_run_list[idx].model_path, map_location=torch.device(args.device))
+            except FileNotFoundError:
+                print("File not found")
+            try:
+                if os.path.exists(client_run_list[idx].model_path):
+                    os.remove(client_run_list[idx].model_path)
+            except Exception as e:
+                print(e)
+            # cmod.eval()
+            closs = client_queue.get()
+            # print(closs)
+            loss_locals.append(closs)
+            # local_models.append(cmod.state_dict())
+            local_models.append(cmod)
+    else:
+        for idx in idxs_users:
+            client_run_list.append(clients_list[idx])
+            new_net_glob = copy.deepcopy(net_glob).to(args.device)
+            l_model, l_loss = clients_list[idx].train(new_net_glob, client_queue, start_time, use_multiprocessing=False)
+            local_models.append(copy.deepcopy(l_model))
+            loss_locals.append(l_loss)
+    return local_models, loss_locals
+
+
+def printloss(c_round, loss_locals):
+    loss_avg = sum(loss_locals) / len(loss_locals)
+    acc_test, test_loss = test_img(net_glob, dataset_test, args)
+    # print('Round {:3d}: Average Train loss {:.3f}, Accuracy={:.3f}, Model Test Loss={:.3f}'.format(iter, loss_avg,
+    #                                                                                                acc_test,
+    #                                                                                                test_loss))
+    textbox.config(state="normal")
+    textbox.insert(1.0,
+                   'Round {:3d}: Average Train loss {:.3f}, Accuracy={:.3f}, Model Test Loss={:.3f}\n'.format(c_round,
+                                                                                                              loss_avg,
+                                                                                                              acc_test,
+                                                                                                              test_loss))
+    textbox.config(state="disabled")
+    loss_train_plot_list.append(loss_avg)
+    acc_plot_list.append(acc_test)
+    loss_test_plot_list.append(test_loss)
+    try:
+        loss_train_file_obj.write(str(loss_avg) + '\n')
+        loss_train_file_obj.flush()
+
+        acc_file_obj.write(str(acc_test) + '\n')
+        acc_file_obj.flush()
+
+        loss_file_obj.write(str(test_loss) + '\n')
+        loss_file_obj.flush()
+    except Exception as e:
+        # print("Error while writing to file. Please check and close all log files.")
+        messagebox.showerror(title="Error while Writing To File", message="Error while writing to file. Please "
+                                                                          "check and close all log files.")
 
 
 def createlogs():
     log_root = "./log"
-    os.makedirs(log_root, exist_ok=True)
+    try:
+        os.makedirs(log_root, exist_ok=True)
+    except Exception as e:
+        messagebox.showerror(title="Error creating models folder", message=f"{e}. Can not make folder")
     global log_path
     log_path = os.path.join(log_root,
                             f"{args.model}-{args.dataset}-B={args.local_bs}-E={args.local_ep}-客户={args.num_users}"
                             f"-{'iid' if args.iid else 'noniid'}-rounds={args.epochs}")
-    os.makedirs(log_path, exist_ok=True)
+    try:
+        os.makedirs(log_path, exist_ok=True)
+    except Exception as e:
+        messagebox.showerror(title="Error creating models folder", message=f"{e}. Can not make folder")
+    global client_path
+    client_path = os.path.join(log_path, "models")
+    try:
+        os.makedirs(client_path, exist_ok=True)
+    except OSError as error:
+        messagebox.showerror(title="Error creating models folder", message=f"{e}. Can not make folder")
 
 
 def splitdataset(args):
@@ -242,6 +405,7 @@ def dataset_split():
 
 
 def createmodel():
+    global net_glob
     if args.model == 'cnn' and args.dataset == 'cifar':
         net_glob = CNNCifar(args=args).to(args.device)
     elif args.model == 'cnn' and args.dataset == 'mnist':
@@ -253,8 +417,8 @@ def createmodel():
         net_glob = MLP(dim_in=len_in, dim_hidden=200, dim_out=args.num_classes).to(args.device)
     else:
         exit('Error: unrecognized model')
-    net_glob.train()
-    return net_glob
+    # net_glob.train()
+    # return net_glob
 
 
 def showimages():
@@ -271,8 +435,6 @@ def showimages():
         img_size = dataset_train2[i][0].shape
         img = np.array(dataset_train2[i][0]).transpose([1, 2, 0])
         img = np.rot90(img)
-        # print("Shape= ", img.shape)
-        # axes[0,i].plot(img, 'b')
         axes[int((i % 36) / 6), i % 6].imshow(img)
         axes[int((i % 36) / 6), i % 6].set_title(labels[dataset_train2[i][1]])
         axes[int((i % 36) / 6), i % 6].axis('off')
@@ -320,15 +482,37 @@ def clients_showimages():
     plt.show()
 
 
-def augmentimages(dataset_train2):
-    # b = list(dataset_train2)
-    # print(len(b))
-    for i in range(0, 5000):
-        img = np.array(dataset_train2[i][0]).transpose([1, 2, 0])
-        img = np.rot90(img)
-        img = img.reshape(3072)
-        dataset_train2[i + 50000][0] = img
-        dataset_train2[i + 50000][1] = dataset_train2[i][1]
+def plot_graphs():
+    print(len(loss_train_plot_list))
+    plt.figure(1)
+    plt.plot(range(len(loss_train_plot_list)), loss_train_plot_list)
+    plt.ylabel('train_loss')
+    plt.xlabel('epoch')
+    plt.savefig(os.path.join(log_path, 'Client_Avg_Train_Loss.png'))
+
+    #Plot Accuracy curve
+    plt.figure(2)
+    plt.plot(range(len(acc_plot_list)), acc_plot_list)
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.savefig(os.path.join(log_path, 'accuracy.png'))
+
+    #Plot Model Loss Curve
+    plt.figure(3)
+    plt.plot(range(len(loss_test_plot_list)), loss_test_plot_list)
+    plt.ylabel('Model Loss')
+    plt.xlabel('epoch')
+    plt.savefig(os.path.join(log_path, 'Model_Test_Loss.png'))
+
+
+def final_test():
+    net_glob.eval()
+    acc_train, loss_train = test_img(net_glob, dataset_train, args)
+    acc_test, loss_test = test_img(net_glob, dataset_test, args)
+    textbox.config(state="normal")
+    textbox.insert(1.0, "Training accuracy: {:.2f}\n".format(acc_train))
+    textbox.insert(1.0, "Testing accuracy: {:.2f}\n".format(acc_test))
+    textbox.config(state="disabled")
 
 
 if __name__ == "__main__":
