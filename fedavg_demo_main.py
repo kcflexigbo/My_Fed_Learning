@@ -16,17 +16,26 @@ from tkinter import filedialog, messagebox
 from tkinter.ttk import *
 from PIL import Image, ImageTk
 from utils.options import args_parser
-from utils.sampling import mnist_iid, mnist_noniid, cifar_iid
+from utils.sampling import *
 from utils.sharedata import create_clients
 from utils.filesbrowser import createPath, createlogfiles
-from models.Nets import MLP, CNNMnist, CNNCifar
+from models.Nets import *
 from models.Federated import FedAvg
 from models.test import test_img
 import warnings
 import threading
 from time import time
+from utils.util import *
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from time import sleep
 import multiprocessing as mp2
+
+CSV_PATH = '../../dataset/UCI_smartphone/UCI_Smartphone_Raw.csv'
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+PUBLIC_DATASET = range(1, 26)
+CLIENT_DATASET = [26, 27, 28, 29, 30]
+BATCH_SIZE = 64
+LEARNING_RATE = 0.01
 
 
 def initGUI(root, args):
@@ -49,12 +58,12 @@ def initGUI(root, args):
 
     lb2 = tk.Label(root, text="数据库类型: ", font=('Arial', 11))
     lb2.place(relx=0.12, rely=0.002, relheight=0.05, relwidth=0.075)
-    dataset_options_list = ["cifar", "mnist"]
+    dataset_options_list = ["cifar", "mnist", "FEMNist", "HAR"]
     global dataset_sel_value
     dataset_sel_value = tk.StringVar(root)
     dataset_sel_value.set(args.dataset)
     dataset_question_menu = tk.OptionMenu(root, dataset_sel_value, *dataset_options_list)
-    dataset_question_menu.place(relx=0.2, rely=0.005, relheight=0.04, relwidth=0.06)
+    dataset_question_menu.place(relx=0.2, rely=0.005, relheight=0.04, relwidth=0.075)
 
     lb3 = tk.Label(root, text="模型类型:", font=('Arial', 11))
     lb3.place(relx=0.28, rely=0.005, relheight=0.04, relwidth=0.06)
@@ -131,7 +140,8 @@ def initGUI(root, args):
     confirmbtn = tk.Button(root, text="开始训练", font=('Arial', 11), command=starttrainthread)
     confirmbtn.place(relx=0.85, rely=0.8, relheight=0.05, relwidth=0.1)
 
-    showimagesbtn = tk.Button(root, text="显示图片", font=('Arial', 11), command=showimages)
+    global showimagesbtn
+    showimagesbtn = tk.Button(root, text="显示图片", font=('Arial', 11), command=start_showimages)
     showimagesbtn.place(relx=0.85, rely=0.7, relheight=0.05, relwidth=0.1)
 
     global showclientsimagesbtn
@@ -162,7 +172,8 @@ def multi_process_info():
     optional_val = int(multi_process_option.get())
     if optional_val == 1:
         messagebox.showinfo(title="多处理",
-                            message="暂时不建议。 时速度较慢并且第一次运行有错误。 改进正在进行中。 请在实际训练前跑一次。")
+                            message="暂时不建议。 时速度较慢并且第一次运行有错误。 改进正在进行中。 "
+                                    "请在实际训练前跑一次。")
 
 
 def starttrainthread():
@@ -202,7 +213,7 @@ def start_train():
     loss_train_file_obj.close()
     acc_file_obj.close()
     loss_file_obj.close()
-    # plot_graphs()
+    plot_graphs()
     final_test()
     writetimereport()
     clientno.config(state="normal")
@@ -215,12 +226,16 @@ def assign_values():
     args.num_users = int(no_clients_text.get())
     args.dataset = dataset_sel_value.get()
     args.model = model_sel_value.get()
-    if args.dataset == "cifar":
-        optval = "store_false"
+    optval = 0
+    if args.dataset == "cifar" or args.dataset == "HAR":
+        # optval = "store_false"
+        optval = True
     elif iid_sel_value.get() == "IID":
-        optval = "store_false"
+        # optval = "store_false"
+        optval = True
     else:
-        optval = "store_true"
+        # optval = "store_true"
+        optval = False
     args.iid = optval
     args.frac = float(frac_clients_text.get())
     args.epochs = int(nrounds_text.get())
@@ -232,7 +247,8 @@ def assign_values():
 def writetimereport():
     timer_file = os.path.join(log_path, 'timer_log.txt')
     timer_file_obj = open(timer_file, 'w')
-    timer_string = f"Time Taken= {(end_time - start_time) // 60:.0f} mins, {(end_time - start_time) % 60:.2f} secs\n"
+    timer_string = (f"Time Taken= {(end_time - start_time) // 60:.0f} mins, "
+                    f"{(end_time - start_time) % 60:.2f} secs\n")
     timer_file_obj.write(timer_string)
     timer_file_obj.close()
     textbox.config(state="normal")
@@ -245,12 +261,13 @@ def model_training():
     loss_train_plot_list = []
     loss_test_plot_list = []
     acc_plot_list = []
+    lr_list = []
     num_clients_for_each_round = max(int(args.frac * args.num_users), 1)
     for c_round in range(args.epochs):
         local_models, loss_locals = client_train(num_clients_for_each_round)
         w_glob = FedAvg(local_models)
         net_glob.load_state_dict(w_glob)
-        printloss(c_round, loss_locals)
+        printloss(c_round, loss_locals, lr_list)
 
 
 def client_train(num_clients_for_each_round):
@@ -288,7 +305,9 @@ def client_train(num_clients_for_each_round):
                 if os.path.exists(client_run_list[idx].model_path):
                     os.remove(client_run_list[idx].model_path)
             except Exception as e:
+                messagebox.showerror("Operating System Can not Find Folder")
                 print(e)
+                exit()
             # cmod.eval()
             closs = client_queue.get()
             # print(closs)
@@ -299,15 +318,21 @@ def client_train(num_clients_for_each_round):
         for idx in idxs_users:
             client_run_list.append(clients_list[idx])
             new_net_glob = copy.deepcopy(net_glob).to(args.device)
-            l_model, l_loss = clients_list[idx].train(new_net_glob, client_queue, start_time, use_multiprocessing=False)
+            if args.dataset == "HAR":
+                l_model, l_loss = clients_list[idx].train2(new_net_glob, client_queue, start_time,
+                                                           use_multiprocessing=False)
+            else:
+                l_model, l_loss = clients_list[idx].train(new_net_glob, client_queue, start_time,
+                                                          use_multiprocessing=False)
             local_models.append(copy.deepcopy(l_model))
             loss_locals.append(l_loss)
     return local_models, loss_locals
 
 
-def printloss(c_round, loss_locals):
+def printloss(c_round, loss_locals, lr_list):
     loss_avg = sum(loss_locals) / len(loss_locals)
     acc_test, test_loss = test_img(net_glob, dataset_test, args)
+    lr_list.append(test_loss)
     # print('Round {:3d}: Average Train loss {:.3f}, Accuracy={:.3f}, Model Test Loss={:.3f}'.format(iter, loss_avg,
     #                                                                                                acc_test,
     #                                                                                                test_loss))
@@ -334,6 +359,24 @@ def printloss(c_round, loss_locals):
         # print("Error while writing to file. Please check and close all log files.")
         messagebox.showerror(title="Error while Writing To File", message="Error while writing to file. Please "
                                                                           "check and close all log files.")
+    lr_scheduler(lr_list)
+
+
+def lr_scheduler(lr_list, patience=2):
+    if patience <= 0:
+        messagebox.showerror(title="Patience", message="Patience must be greater than zero.")
+        return ValueError
+    if len(lr_list) < patience + 1 or args.lr <= 1e-10:
+        return
+    vara = -1 - patience
+    avg = sum(lr_list[vara:-1]) / len(lr_list[vara:-1])
+    if avg < lr_list[-1]:
+        args.lr = args.lr * 0.1
+        textbox.config(state="normal")
+        textbox.insert(1.0, f"Lr rate reduced from {args.lr * 10:10f} to {args.lr:10f}\n")
+        textbox.config(state="disabled")
+    else:
+        return
 
 
 def createlogs():
@@ -381,26 +424,78 @@ def dataset_split():
             dict_users2 = mnist_iid(dataset_train2, args.num_users)
         else:
             dict_users2 = mnist_noniid(dataset_train2, args.num_users)
+        img_size = dataset_train2[0][0].shape
     elif args.dataset == 'cifar':
         trans_cifar_train = transforms.Compose([transforms.RandomHorizontalFlip(),
                                                 transforms.RandomRotation(10),
                                                 transforms.RandomCrop(28),
                                                 transforms.ToTensor(),
                                                 transforms.Normalize((0.4, 0.4, 0.4), (0.4, 0.4, 0.4))])
-        trans_cifar_test = transforms.Compose([transforms.RandomCrop(28),
-                                               transforms.ToTensor(),
+        trans_cifar_test = transforms.Compose([transforms.ToTensor(),
                                                transforms.Normalize((0.4, 0.4, 0.4), (0.4, 0.4, 0.4))])
         datadir = os.path.join(cfilepath, "data", "cifar")
-        dataset_train2 = datasets.CIFAR10(root=datadir, train=True, download=True, transform=trans_cifar_train)
-        dataset_test2 = datasets.CIFAR10(root=datadir, train=False, download=True, transform=trans_cifar_test)
+        dataset_train2 = datasets.CIFAR10(root=datadir, train=True, download=True,
+                                          transform=trans_cifar_train)
+        dataset_test2 = datasets.CIFAR10(root=datadir, train=False, download=True,
+                                         transform=trans_cifar_test)
         #(dataset_train2)
         if args.iid:
             dict_users2 = cifar_iid(dataset_train2, args.num_users)
         else:
             exit('Error: only consider IID setting in CIFAR10')
+        img_size = dataset_train2[0][0].shape
+    elif args.dataset == 'FEMNist':
+        trans_femnist_train = transforms.Compose([transforms.ToTensor(),
+                                                  transforms.Normalize((0.1307,),
+                                                                       (0.3081,))])
+        trans_femnist_test = transforms.Compose([transforms.ToTensor(),
+                                                 transforms.Normalize((0.1307,),
+                                                                      (0.3081,))])
+        datadir = os.path.join(cfilepath, "data", "FEMnist")
+        os.makedirs(datadir, exist_ok=True)
+        dataset_train2 = datasets.FashionMNIST(root=datadir, train=True, download=True,
+                                               transform=trans_femnist_train)
+        dataset_test2 = datasets.FashionMNIST(root=datadir, train=False, download=True,
+                                              transform=trans_femnist_test)
+        # sample users
+        if args.iid:
+            dict_users2 = mnist_iid(dataset_train2, args.num_users)
+        else:
+            dict_users2 = mnist_noniid(dataset_train2, args.num_users)
+        img_size = dataset_train2[0][0].shape
+    elif args.dataset == "HAR":
+        # code missing
+        public_data, public_label = load_subjects_data(args.csv_path, PUBLIC_DATASET)
+        public_data1 = np.concatenate([np.array(i) for i in public_data])
+        public_label1 = np.concatenate([np.array(i) for i in public_label])
+
+        public_dataset = SmartphoneDataset(public_data1, public_label1)
+
+        client_data, client_label = load_subjects_data(args.csv_path, CLIENT_DATASET)
+        client_data1 = np.concatenate([np.array(i) for i in client_data])
+        client_label1 = np.concatenate([np.array(i) for i in client_label])
+        client_dataset = SmartphoneDataset(client_data1, client_label1)
+
+        # print(type(public_data))
+        # print(type(client_data))
+        # exit()
+        total_dataset = SmartphoneDataset(np.concatenate([np.array(i) for i in public_data + client_data]),
+                                          np.concatenate([np.array(i) for i in public_label + client_label]))
+
+        total_labels = np.concatenate([np.array(i) for i in public_label + client_label])
+        # print(type(client_label))
+        # exit()
+        dataset_train2, dataset_test2 = HARSplitDataset(args, total_labels, total_dataset)
+        # print(type(client_distributed_data[0][0]))
+
+        # client_distributed_data = [client_dataset, client_label]
+        dict_users2 = mnist_iid(dataset_train2, args.num_users)
     else:
         exit('Error: unrecognized dataset')
-    img_size = dataset_train2[0][0].shape
+    # print(dataset_train2.data.shape)
+    # print(dataset_test2.data.shape)
+    confirmbtn.config(state="normal")
+    # exit()
     return dataset_train2, dataset_test2, dict_users2
 
 
@@ -410,35 +505,53 @@ def createmodel():
         net_glob = CNNCifar(args=args).to(args.device)
     elif args.model == 'cnn' and args.dataset == 'mnist':
         net_glob = CNNMnist(args=args).to(args.device)
+    elif args.model == 'cnn' and args.dataset == 'FEMNist':
+        net_glob = CNNFEMnist(args=args).to(args.device)
+    elif args.model == 'cnn' and args.dataset == 'HAR':
+        net_glob = CNN_HAR(args=args).to(args.device)
     elif args.model == 'mlp':
         len_in = 1
         for x in img_size:
             len_in *= x
-        net_glob = MLP(dim_in=len_in, dim_hidden=200, dim_out=args.num_classes).to(args.device)
+        net_glob = (MLP(dim_in=len_in, dim_hidden=200, dim_out=args.num_classes)
+                    .to(args.device))
     else:
         exit('Error: unrecognized model')
     # net_glob.train()
     # return net_glob
 
 
+def start_showimages():
+    # showimage_thread = threading.Thread(target=showimages)
+    # showimage_thread.daemon = True
+    # showimage_thread.start()
+    showimages()
+
+
 def showimages():
+    global showimagesbtn
+    showimagesbtn.config(state="disabled")
     args.dataset = dataset_sel_value.get()
     if args.dataset == "cifar":
         labels = ["airplane", "automobile", "bird", "cat", "deer",
                   "dog", "frog", "horse", "ship", "truck"]
-    else:
+    elif args.dataset == "mnist":
         labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    else:
+        labels = ["T-shirt/top", "Trouser", "Pullover", "Dress", "Coat", "Sandal", "Shirt", "Sneaker", "Bag",
+                  "Ankle boot"]
     dataset_train2, dataset_test2, dict_users2 = dataset_split()
     fig, axes = plt.subplots(nrows=6, ncols=6, figsize=(5, 5))
     warnings.filterwarnings("ignore")
     for i in range(36):
         img_size = dataset_train2[i][0].shape
         img = np.array(dataset_train2[i][0]).transpose([1, 2, 0])
-        img = np.rot90(img)
+        # img = np.rot90(img)
         axes[int((i % 36) / 6), i % 6].imshow(img)
-        axes[int((i % 36) / 6), i % 6].set_title(labels[dataset_train2[i][1]])
+        # axes[int((i % 36) / 6), i % 6].set_title(labels[dataset_train2[i][1]])
         axes[int((i % 36) / 6), i % 6].axis('off')
     plt.show()
+    showimagesbtn.config(state="normal")
 
 
 def clients_showimages():
@@ -474,7 +587,8 @@ def clients_showimages():
             img = np.array(j[0][image_index]).transpose([1, 2, 0])
             img = np.rot90(img)
             axes[int(count / 6), count % 6].imshow(img)
-            axes[int(count / 6), count % 6].set_title(labels[j[1][image_index]])
+            # axes[int(count / 6), count % 6].set_title(labels[j[1][image_index]])
+            axes[int(count / 6), count % 6].set_title(j[1][image_index])
             axes[int(count / 6), count % 6].axis('off')
             count += 1
             if count > 35:
@@ -483,7 +597,7 @@ def clients_showimages():
 
 
 def plot_graphs():
-    print(len(loss_train_plot_list))
+    # print(len(loss_train_plot_list))
     plt.figure(1)
     plt.plot(range(len(loss_train_plot_list)), loss_train_plot_list)
     plt.ylabel('train_loss')

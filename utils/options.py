@@ -37,5 +37,22 @@ def args_parser():
     parser.add_argument('--verbose', action='store_true', help='verbose print')
     parser.add_argument('--seed', type=int, default=1, help='random seed (default: 1)')
     parser.add_argument('--all_clients', action='store_true', help='aggregation over all clients')
+
+    parser.add_argument('--csv_path', type=str, default='data/HAR/UCI_Smartphone_Raw.csv', help='CSV data path')
+    # parser.add_argument('--round', type=int, default=100, help='Round for federated learning')
+    # parser.add_argument('--internal_epoch', type=int, default=10, help='Internal epoch of each client')
+    parser.add_argument('--global_model_path', type=str, default='global_model/Global_CNN.pt',
+                        help='Trained global model path')
+    # parser.add_argument('--batch_size', type=int, default=64, help='Batch size used')
+    # parser.add_argument('--lr', type=float, default=0.01, help='Learning rate used')
+    # parser.add_argument('--C', type=float, default=1.0, help='Fraction of client for each round averaging')
+    parser.add_argument('--val_split', type=float, default=0.3, help='Validation split for test')
+    parser.add_argument('--lambda_coral', type=float, default=0.01, help='trade off parameter in CORAL loss')
+    # parser.add_argument('--momentum', type=float, default=0.9, help='momentum for SGD')
+    # parser.add_argument('--weight_decay', type=float, default=0.01, help='weight decay for SGD')
+    # parser.add_argument('--lr_patience', type=int, default=99999,
+    #                     help='learning patience before reduced when loss does not go down in each client')
+    parser.add_argument('--n_channels', type=int, default=9, help="Number of channels")
+    parser.add_argument('--n_classes', type=int, default=6, help="Number of classes")
     args = parser.parse_args()
     return args

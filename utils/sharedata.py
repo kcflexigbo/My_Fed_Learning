@@ -1,6 +1,7 @@
 from utils.Clients import Clients
 from torch.utils.data import DataLoader, Dataset
-
+import torch
+import numpy as np
 
 class DatasetSplit(Dataset):
     def __init__(self, dataset, idxs):
@@ -13,6 +14,12 @@ class DatasetSplit(Dataset):
     def __getitem__(self, item):
         image, label = self.dataset[self.idxs[item]]
         return image, label
+
+    # def __getitem__(self, idx):
+    #     data = torch.from_numpy(self.dataset[idx])
+    #     label = self.idxs[idx]
+    #
+    #     return data, label
 
 
 def create_clients(args, dataset_to_split, dict_users, client_path):

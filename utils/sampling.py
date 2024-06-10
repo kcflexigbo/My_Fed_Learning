@@ -5,6 +5,9 @@
 
 import numpy as np
 from torchvision import datasets, transforms
+from torch.utils.data.sampler import SubsetRandomSampler
+from sklearn.model_selection import train_test_split
+import torch
 
 
 def mnist_iid(dataset, num_users):
@@ -56,7 +59,7 @@ def cifar_iid(dataset, num_users, newData=None):
     :param num_users:
     :return: dict of image index
     """
-    if(newData!=None):
+    if (newData != None):
         total_Length = len(dataset) + len(newData)
     else:
         total_Length = len(dataset)
@@ -66,6 +69,24 @@ def cifar_iid(dataset, num_users, newData=None):
         dict_users[i] = set(np.random.choice(all_idxs, num_items, replace=False))
         all_idxs = list(set(all_idxs) - dict_users[i])
     return dict_users
+
+
+def HARSplitDataset(args, public_label, public_dataset):
+    train_idx, valid_idx = train_test_split(np.arange(len(public_label)),
+                                            test_size=args.val_split, random_state=42, shuffle=True,
+                                            stratify=public_label)
+    train_sampler = SubsetRandomSampler(train_idx)
+    valid_sampler = SubsetRandomSampler(valid_idx)
+
+    trainloader = torch.utils.data.DataLoader(public_dataset,
+                                              batch_size=args.local_bs,
+                                              sampler=train_sampler, num_workers=1, drop_last=True)
+
+    validloader = torch.utils.data.DataLoader(public_dataset,
+                                              batch_size=1,
+                                              sampler=valid_sampler, num_workers=1, drop_last=True)
+
+    return list(trainloader), list(validloader)
 
 
 if __name__ == '__main__':
