@@ -23,6 +23,7 @@ class Clients(object):
         self.title = title
         self.model_path = os.path.join(logPath, f"client_model_{self.title}.pt")
 
+    #CIFAR,
     def train(self, net, client_queue=None, timer=None, use_multiprocessing=True):
         net.train()
         # train and update
@@ -62,7 +63,7 @@ class Clients(object):
             batch_loss = []
             for i, (images, labels) in enumerate(self.train_data):
                 for j in range(len(images)):
-                    image, label = images[j], labels[j]
+                    image_batch, label_batch = images[j], labels[j]
                     image, label = image.to(self.args.device), label.to(self.args.device)
                     net.zero_grad()
                     log_probs = net(image)

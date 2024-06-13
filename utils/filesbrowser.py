@@ -14,8 +14,9 @@ def createPath():
     #     print("Directory already Exists and Not Created")
 
     #Get users documents location using the userpaths library
-    cfilepath = us.get_my_documents()
-    cfilepath = os.path.join(cfilepath, 'New Federated Learning', 'My Fed Learning')
+    # cfilepath = us.get_my_documents()
+    # cfilepath = os.path.join(cfilepath, 'New Federated Learning', 'My Fed Learning')
+    cfilepath = os.path.join('./')
 
     #Create the directory if not existing, else continue
     try:
@@ -23,7 +24,7 @@ def createPath():
         #print("Directory Created Successfully")
     except OSError as error:
         print("Directory already Exists and Not Created")
-    return cfilepath
+    return "."
 
 
 def createlogfiles(log_path, net_glob):

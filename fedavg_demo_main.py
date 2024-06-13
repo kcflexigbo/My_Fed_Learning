@@ -21,7 +21,7 @@ from utils.sharedata import create_clients
 from utils.filesbrowser import createPath, createlogfiles
 from models.Nets import *
 from models.Federated import FedAvg
-from models.test import test_img
+from models.test import test_img, test_img2
 import warnings
 import threading
 from time import time
@@ -225,6 +225,7 @@ def start_train():
 def assign_values():
     args.num_users = int(no_clients_text.get())
     args.dataset = dataset_sel_value.get()
+    #args.dataset = "HA"
     args.model = model_sel_value.get()
     optval = 0
     if args.dataset == "cifar" or args.dataset == "HAR":
@@ -331,7 +332,10 @@ def client_train(num_clients_for_each_round):
 
 def printloss(c_round, loss_locals, lr_list):
     loss_avg = sum(loss_locals) / len(loss_locals)
-    acc_test, test_loss = test_img(net_glob, dataset_test, args)
+    if args.dataset == "HAR":
+        acc_test, test_loss = test_img2(net_glob, dataset_test, args)
+    else:
+        acc_test, test_loss = test_img(net_glob, dataset_test, args)
     lr_list.append(test_loss)
     # print('Round {:3d}: Average Train loss {:.3f}, Accuracy={:.3f}, Model Test Loss={:.3f}'.format(iter, loss_avg,
     #                                                                                                acc_test,
@@ -387,7 +391,7 @@ def createlogs():
         messagebox.showerror(title="Error creating models folder", message=f"{e}. Can not make folder")
     global log_path
     log_path = os.path.join(log_root,
-                            f"{args.model}-{args.dataset}-B={args.local_bs}-E={args.local_ep}-客户={args.num_users}"
+                            f"{args.model}-{args.dataset}-B={args.local_bs}-frac={args.frac}-E={args.local_ep}-客户={args.num_users}"
                             f"-{'iid' if args.iid else 'noniid'}-rounds={args.epochs}")
     try:
         os.makedirs(log_path, exist_ok=True)
@@ -431,7 +435,8 @@ def dataset_split():
                                                 transforms.RandomCrop(28),
                                                 transforms.ToTensor(),
                                                 transforms.Normalize((0.4, 0.4, 0.4), (0.4, 0.4, 0.4))])
-        trans_cifar_test = transforms.Compose([transforms.ToTensor(),
+        trans_cifar_test = transforms.Compose([transforms.RandomCrop(28),
+                                               transforms.ToTensor(),
                                                transforms.Normalize((0.4, 0.4, 0.4), (0.4, 0.4, 0.4))])
         datadir = os.path.join(cfilepath, "data", "cifar")
         dataset_train2 = datasets.CIFAR10(root=datadir, train=True, download=True,
@@ -476,7 +481,6 @@ def dataset_split():
         client_label1 = np.concatenate([np.array(i) for i in client_label])
         client_dataset = SmartphoneDataset(client_data1, client_label1)
 
-        # print(type(public_data))
         # print(type(client_data))
         # exit()
         total_dataset = SmartphoneDataset(np.concatenate([np.array(i) for i in public_data + client_data]),
@@ -494,7 +498,7 @@ def dataset_split():
         exit('Error: unrecognized dataset')
     # print(dataset_train2.data.shape)
     # print(dataset_test2.data.shape)
-    confirmbtn.config(state="normal")
+    # confirmbtn.config(state="normal")
     # exit()
     return dataset_train2, dataset_test2, dict_users2
 
@@ -537,6 +541,9 @@ def showimages():
                   "dog", "frog", "horse", "ship", "truck"]
     elif args.dataset == "mnist":
         labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    elif args.dataset == "HAR":
+        messagebox.showerror("Error", "HAR dataset cannot display images")
+        exit()
     else:
         labels = ["T-shirt/top", "Trouser", "Pullover", "Dress", "Coat", "Sandal", "Shirt", "Sneaker", "Bag",
                   "Ankle boot"]
@@ -573,8 +580,14 @@ def clients_showimages():
     if args.dataset == "cifar":
         labels = ["airplane", "automobile", "bird", "cat", "deer",
                   "dog", "frog", "horse", "ship", "truck"]
-    else:
+    elif args.dataset == "mnist":
         labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    elif args.dataset == "HAR":
+        messagebox.showerror("Error","HAR dataset cannot display images")
+        exit()
+    else:
+        labels = ["T-shirt/top", "Trouser", "Pullover", "Dress", "Coat", "Sandal", "Shirt", "Sneaker", "Bag",
+                  "Ankle boot"]
     fig, axes = plt.subplots(nrows=6, ncols=6, figsize=(5, 5))
     warnings.filterwarnings("ignore")
     cdataset = selClient.train_data
@@ -621,8 +634,12 @@ def plot_graphs():
 
 def final_test():
     net_glob.eval()
-    acc_train, loss_train = test_img(net_glob, dataset_train, args)
-    acc_test, loss_test = test_img(net_glob, dataset_test, args)
+    if args.dataset == "HAR":
+        acc_train, loss_train = test_img2(net_glob, dataset_train, args)
+        acc_test, loss_test = test_img2(net_glob, dataset_test, args)
+    else:
+        acc_train, loss_train = test_img(net_glob, dataset_train, args)
+        acc_test, loss_test = test_img(net_glob, dataset_test, args)
     textbox.config(state="normal")
     textbox.insert(1.0, "Training accuracy: {:.2f}\n".format(acc_train))
     textbox.insert(1.0, "Testing accuracy: {:.2f}\n".format(acc_test))
